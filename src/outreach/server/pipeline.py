@@ -15,7 +15,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from pydantic import SecretStr
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from outreach import stages as stages_mod
@@ -25,7 +25,7 @@ from outreach.draft import _company, build_evidence_pack, validate_draft
 from outreach.models import CompanyProfile, DraftLLM, ClaimUsed, HunterContact
 from outreach.playbook import Playbook
 from outreach.server.config import ServerConfig
-from outreach.server.db import Campaign, HunterCacheRow, Message, PlaybookRow, Prospect, Workspace, utcnow
+from outreach.server.db import Campaign, EventRow, HunterCacheRow, Message, PlaybookRow, Prospect, Workspace, utcnow
 from outreach.server.security import Crypto
 from outreach.server.workspace import get_secret, hunter_usage, log_event, record_hunter_call, secret_source, settings_of
 from outreach.skeleton import Context
@@ -98,6 +98,26 @@ class DbHunter:
 
     def account(self) -> dict:
         return {"plan": None, "reset_date": None, "remaining": None}
+
+
+OWNER_KEY_EVENT = "owner_key_company"
+
+
+def owner_key_cap(db: Session, ws: Workspace, cfg: ServerConfig) -> str | None:
+    """On a no-sign-in site, companies researched on the site owner's Gemini key are capped per
+    workspace and site-wide per day (anyone can open a new workspace). Returns why, when over."""
+    if not cfg.open_access or secret_source(ws, "gemini_api_key", cfg) != "env":
+        return None
+    day = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    q = select(func.count()).select_from(EventRow).where(EventRow.kind == OWNER_KEY_EVENT, EventRow.at >= day)
+    if (db.scalar(q) or 0) >= cfg.open_max_prospects:
+        return (f"This site's daily limit of {cfg.open_max_prospects} companies on real data is reached. Try demo "
+                "mode, add your own Gemini key in Settings > Integrations, or come back tomorrow.")
+    if (db.scalar(q.where(EventRow.workspace_id == ws.id)) or 0) >= cfg.open_max_domains:
+        return (f"This workspace has researched {cfg.open_max_domains} companies on real data today, the limit on "
+                "this site. Add your own Gemini key in Settings > Integrations to go further.")
+    db.add(EventRow(workspace_id=ws.id, kind=OWNER_KEY_EVENT, message="company researched on the site's key"))
+    return None
 
 
 def build_context(db: Session, ws: Workspace, campaign: Campaign | None, pb: Playbook,
@@ -198,6 +218,12 @@ def advance(db: Session, prospect: Prospect, crypto: Crypto, cfg: ServerConfig) 
         _stop(db, prospect, trail, "poc", "no_contact",
               "Hunter search is off for this campaign: add a contact by hand", None)
         return
+
+    if stage == PIPELINE[0] and not ws.demo_mode:
+        over = owner_key_cap(db, ws, cfg)
+        if over:
+            _fail(db, prospect, trail, over, final=True)
+            return
 
     ctx = build_context(db, ws, campaign, pb, crypto, cfg)
     if prospect.manual_contact:

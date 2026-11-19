@@ -340,3 +340,24 @@ def test_guest_starts_with_the_sites_resend_account(tmp_path, monkeypatch):
         s = c.get("/api/settings").json()
         assert s["sending"]["provider"] == "resend" and s["sending"]["mode"] == "test"
         assert s["sending"]["owner_email"] == ""  # the owner's address is never shown to visitors
+
+
+def test_owner_gemini_key_is_capped_per_workspace_and_site(tmp_path, monkeypatch):
+    from outreach.server.db import Database, Workspace
+    from outreach.server.pipeline import owner_key_cap
+
+    for var in ("GEMINI_API_KEY", "DATABASE_URL", "VERCEL", "OPEN_ACCESS"):
+        monkeypatch.delenv(var, raising=False)
+    cfg = load_config({"DATA_DIR": str(tmp_path), "SECRET_KEY": "test-secret-key-0123456789",
+                       "GEMINI_API_KEY": "owner-key", "OPEN_MAX_DOMAINS": "2", "OPEN_MAX_PROSPECTS": "3"})
+    database = Database(cfg.database_url)
+    database.create_all()
+    with database.session() as db:
+        a, b, own = Workspace(name="a", secrets={}), Workspace(name="b", secrets={}), Workspace(name="c", secrets={"gemini_api_key": "x"})
+        db.add_all([a, b, own])
+        db.flush()
+        assert owner_key_cap(db, a, cfg) is None and owner_key_cap(db, a, cfg) is None
+        assert "This workspace" in owner_key_cap(db, a, cfg)          # 2 per workspace a day
+        assert owner_key_cap(db, b, cfg) is None                      # site total is now 3
+        assert "daily limit of 3" in owner_key_cap(db, b, cfg)       # then the site-wide cap
+        assert owner_key_cap(db, own, cfg) is None                    # own key: no cap

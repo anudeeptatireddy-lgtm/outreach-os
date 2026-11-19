@@ -31,6 +31,9 @@ from outreach.server.security import Crypto
 from outreach.server.workspace import get_secret, log_event, secret_source, settings_of
 
 
+OWNER_MAIL_DAILY_CAP = 50  # site-wide, for the site owner's account (Resend's free plan allows 100 a day)
+
+
 class SendRefused(Exception):
     pass
 
@@ -159,6 +162,13 @@ def send_message(db: Session, msg: Message, crypto: Crypto, cfg: ServerConfig, *
             _fail(db, msg, "live sending needs your own Gmail or Resend account (Settings > Integrations)")
             return
         owner = cfg.owner_email
+        day = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        site_sent = db.scalar(select(func.count()).select_from(Message).where(
+            Message.sent_at >= day, Message.mode == "test")) or 0
+        if site_sent >= OWNER_MAIL_DAILY_CAP:
+            _fail(db, msg, f"this site's shared email account sends at most {OWNER_MAIL_DAILY_CAP} test emails a day; "
+                           "add your own Resend or Gmail in Settings > Integrations")
+            return
     if mode == "test":
         if not owner:
             _fail(db, msg, "test mode needs an owner email (Settings > Sending)")

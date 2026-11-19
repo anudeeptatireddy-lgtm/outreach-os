@@ -307,9 +307,12 @@ def _core_router():
                          svc: Services = Depends(services)):
         ws = db.get(Workspace, c.ws.id)
         if name in ("gmail", "resend"):
-            from outreach.server.mailer import send_test_email
+            from outreach.server.mailer import send_test_email, uses_owner_mail
 
-            if svc.cfg.open_access and not _test_mail_limiter.allow(f"testmail:{ws.id}"):
+            # the owner's account is shared by every visitor, so its limit is site-wide
+            bucket = "testmail:owner" if uses_owner_mail(ws, name, svc.cfg) else f"testmail:{ws.id}"
+            limit_hit = svc.cfg.open_access and not _test_mail_limiter.allow(bucket)
+            if limit_hit:
                 return {"ok": False, "detail": "test emails are limited to 3 an hour on this site"}
 
             ok, detail = send_test_email(ws, name, svc.crypto, svc.cfg)
