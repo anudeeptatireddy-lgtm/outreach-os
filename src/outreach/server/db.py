@@ -162,6 +162,24 @@ class HunterCacheRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class WinRow(Base):
+    """An email that earned a positive reply. Its approach (angle, structure, call to action) is
+    shown to the writer for similar prospects later; its facts never are reused."""
+
+    __tablename__ = "winning_emails"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    playbook_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    message_id: Mapped[int] = mapped_column(Integer, unique=True)
+    subject: Mapped[str] = mapped_column(String(300))
+    body: Mapped[str] = mapped_column(Text)
+    persona: Mapped[str] = mapped_column(String(200), default="")
+    company: Mapped[str] = mapped_column(String(200), default="")
+    note: Mapped[str] = mapped_column(Text, default="")
+    uses: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class Database:
     def __init__(self, url: str):
         kwargs: dict = {"future": True}

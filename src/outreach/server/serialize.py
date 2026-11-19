@@ -174,7 +174,7 @@ def _public_trail(trail: dict) -> dict:
     draft = t.get("draft")
     if draft:
         draft = {k: draft.get(k) for k in ("pain_points", "pain_points_source", "evidence_pack", "hook_map",
-                                           "validation", "claims_used")}
+                                           "validation", "claims_used", "learned_from")}
     return {"scrape": scrape, "extract": extract, "qualify": t.get("qualify"), "poc": t.get("poc"), "draft": draft,
             "stop": t.get("stop")}
 
@@ -197,6 +197,17 @@ def message_dict(m: Message, prospect: Prospect, campaign: Campaign, ws: Workspa
     }
 
 
+def _learned_from(db: Session, p: Prospect) -> list[dict]:
+    """The winning emails (good replies) shown to the writer when this draft was made."""
+    from outreach.server.db import WinRow
+
+    ids = (((p.trail or {}).get("draft") or {}).get("learned_from")) or []
+    if not ids:
+        return []
+    rows = db.scalars(select(WinRow).where(WinRow.id.in_(ids), WinRow.workspace_id == p.workspace_id))
+    return [{"id": w.id, "subject": w.subject, "persona": w.persona, "company": w.company} for w in rows]
+
+
 def prospect_detail(db: Session, p: Prospect, ws: Workspace, cfg: ServerConfig) -> dict:
     campaign = db.get(Campaign, p.campaign_id)
     pb_row = db.get(PlaybookRow, campaign.playbook_id)
@@ -207,6 +218,7 @@ def prospect_detail(db: Session, p: Prospect, ws: Workspace, cfg: ServerConfig) 
         **prospect_row(p, msgs, campaign),
         "summary": p.summary,
         "trail": _public_trail(p.trail),
+        "learned_from": _learned_from(db, p),
         "messages": [message_dict(m, p, campaign, ws, pb, cfg) for m in msgs],
         "events": [event_dict(e) for e in events],
         "playbook": {"id": campaign.playbook_id, "name": pb_row.name if pb_row else None,

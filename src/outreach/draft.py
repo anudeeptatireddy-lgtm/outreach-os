@@ -385,7 +385,7 @@ def compose_body(core: str, company: str, pb: Playbook | None = None) -> str:
 
 def _draft_prompt(
     profile, contact, pack, pain_points, failures: list[str] | None,
-    pb: Playbook | None = None, instructions: str | None = None,
+    pb: Playbook | None = None, instructions: str | None = None, winners: list | None = None,
 ) -> str:
     pains = "\n".join(f"- {p.pain} ({p.evidence_id})" for p in pain_points)
     wl = "\n".join(f"{k}: {v}" for k, v in _pb(pb).whitelist.items())
@@ -395,6 +395,8 @@ def _draft_prompt(
         f"<pain_points>\n{pains}\n</pain_points>\n<value_claims>\n{wl}\n</value_claims>\n\n"
         "Write the email. Return subject, body and claims_used."
     )
+    if winners:
+        prompt += "\n\n" + _winners_text(winners)
     if instructions and instructions.strip():
         prompt += (
             "\n\nReviewer guidance for this draft (follow it unless it breaks a rule above):\n"
@@ -407,6 +409,21 @@ def _draft_prompt(
     return prompt
 
 
+def _winners_text(winners: list) -> str:
+    """Emails that earned positive replies: reuse the thinking, never the facts. The validator
+    still rejects any name, number or claim this company's evidence does not support."""
+    parts = []
+    for w in winners[:3]:
+        who = f" (to a {w.persona}" + (f" at {w.company})" if w.company else ")") if w.persona else ""
+        parts.append(f"<winning_email{who}>\nSubject: {w.subject}\n{w.body.strip()[:900]}\n</winning_email>")
+    return (
+        "These earlier emails got a positive reply. Reuse what worked: the angle on the pain, the "
+        "structure, the length and the kind of call to action. Do NOT copy their facts, company "
+        "names, numbers or customer names: every fact must come from this company's evidence above.\n"
+        + "\n".join(parts)
+    )
+
+
 def build_draft(
     llm,
     *,
@@ -416,6 +433,7 @@ def build_draft(
     contact: HunterContact,
     playbook: Playbook | None = None,
     instructions: str | None = None,
+    winners: list | None = None,
 ) -> DraftOutput:
     pb = playbook
     pack = build_evidence_pack(profile, pb)
@@ -434,7 +452,7 @@ def build_draft(
     for attempt in (1, 2):
         result = llm.generate_structured(
             model=smart_model, system=draft_system(pb),
-            prompt=_draft_prompt(profile, contact, pack, pains, failures or None, pb, instructions),
+            prompt=_draft_prompt(profile, contact, pack, pains, failures or None, pb, instructions, winners),
             schema=DraftLLM, purpose="draft", thinking_level="LOW",
             prompt_version=DRAFT_PROMPT_VERSION,
         )
@@ -468,4 +486,5 @@ def build_draft(
             ok=not failures, failures=failures, attempts=len(attempt_failures),
             attempt_failures=attempt_failures,
         ),
+        learned_from=[w.id for w in (winners or [])[:3]],
     )

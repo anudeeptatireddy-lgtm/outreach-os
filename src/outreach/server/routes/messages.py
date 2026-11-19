@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from outreach.playbook import Playbook
-from outreach.server.db import Campaign, EventRow, Message, PlaybookRow, Prospect, Suppression, Workspace, utcnow
+from outreach.server.db import Campaign, EventRow, Message, PlaybookRow, Prospect, Suppression, WinRow, Workspace, utcnow
 from outreach.server.deps import Caller, Services, caller, get_db, not_found, services
 from outreach.server.mailer import next_send_slot
 from outreach.server.pipeline import SystemicError, regenerate, revalidate
@@ -179,18 +179,55 @@ def regen(mid: int, body: RegenIn, c: Caller = Depends(caller), db: Session = De
     return _out(db, m, c.ws, svc)
 
 
+class RepliedIn(BaseModel):
+    positive: bool = False  # a good reply: learn from this email
+    note: str = ""          # optional: what worked, in your words
+
+
 @router.post("/messages/{mid}/mark-replied")
-def mark_replied(mid: int, c: Caller = Depends(caller), db: Session = Depends(get_db),
-                 svc: Services = Depends(services)):
+def mark_replied(mid: int, body: RepliedIn | None = None, c: Caller = Depends(caller),
+                 db: Session = Depends(get_db), svc: Services = Depends(services)):
     from outreach.server.app import stop_prospect
 
+    body = body or RepliedIn()
     m = _msg(db, c, mid)
-    m.replied_at = utcnow()
+    if m.status != "sent":
+        raise HTTPException(409, "only a sent email can be marked as replied")
+    m.replied_at = m.replied_at or utcnow()
     stop_prospect(db, m.prospect_id, "replied")
     prospect = db.get(Prospect, m.prospect_id)
     log_event(db, c.ws.id, "replied", f"{prospect.domain}: {m.to_name} replied. Sequence stopped.", level="success",
               campaign_id=m.campaign_id, prospect_id=m.prospect_id)
+    if body.positive:
+        _learn(db, c, m, prospect, body.note)
     return _out(db, m, c.ws, svc)
+
+
+def _learn(db: Session, c: Caller, m: Message, prospect: Prospect, note: str) -> None:
+    if db.scalar(select(WinRow).where(WinRow.message_id == m.id)) is not None:
+        return
+    campaign = db.get(Campaign, m.campaign_id)
+    db.add(WinRow(workspace_id=c.ws.id, playbook_id=campaign.playbook_id if campaign else None, message_id=m.id,
+                  subject=m.subject, body=m.body, persona=m.to_title or "",
+                  company=prospect.company_name or prospect.domain, note=note.strip()[:500]))
+    log_event(db, c.ws.id, "learned", f"{prospect.domain}: good reply. This email now guides new drafts for "
+              f"similar people.", level="success", campaign_id=m.campaign_id, prospect_id=m.prospect_id)
+
+
+@router.get("/wins")
+def list_wins(c: Caller = Depends(caller), db: Session = Depends(get_db)):
+    rows = db.scalars(select(WinRow).where(WinRow.workspace_id == c.ws.id).order_by(WinRow.created_at.desc()))
+    return [{"id": w.id, "message_id": w.message_id, "subject": w.subject, "body": w.body, "persona": w.persona,
+             "company": w.company, "note": w.note, "uses": w.uses, "created_at": iso(w.created_at)} for w in rows]
+
+
+@router.delete("/wins/{wid}")
+def delete_win(wid: int, c: Caller = Depends(caller), db: Session = Depends(get_db)):
+    w = db.get(WinRow, wid)
+    if w is None or w.workspace_id != c.ws.id:
+        raise not_found("winning email not found")
+    db.delete(w)
+    return {"ok": True}
 
 
 # --------------------------------------------------------------------------- analytics

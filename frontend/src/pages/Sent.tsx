@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { useMutation } from "@tanstack/react-query";
-import { MessageSquareReply } from "lucide-react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { MessageSquareReply, ThumbsUp, Trash2 } from "lucide-react";
 import { api, errorMessage } from "../api/client";
 import { invalidateWork, useMessages, useQueryClient } from "../api/hooks";
 import type { Message, MessageStatus } from "../api/types";
@@ -57,18 +57,34 @@ export default function Sent() {
   const rows = useMemo(() => (q.data ?? []).filter((m) => IN[filter].includes(m.status)), [q.data, filter]);
   const count = (f: Filter) => (q.data ?? []).filter((m) => IN[f].includes(m.status)).length;
 
+  const wins = useQuery({ queryKey: ["wins"], queryFn: api.wins });
   const replied = useMutation({
-    mutationFn: (id: number) => api.markReplied(id),
-    onSuccess: () => {
+    mutationFn: ({ id, positive }: { id: number; positive: boolean }) => api.markReplied(id, { positive }),
+    onSuccess: (_m, v) => {
       invalidateWork(qc);
-      toast.success("Marked as replied", "Pending follow-ups for this person are cancelled.");
+      void qc.invalidateQueries({ queryKey: ["wins"] });
+      if (v.positive) toast.success("Learning from this email", "New drafts for similar people will reuse its approach.");
+      else toast.success("Marked as replied", "Pending follow-ups for this person are cancelled.");
     },
     onError: (e) => toast.error("Couldn't mark as replied", errorMessage(e)),
   });
   const mark = async (m: Message) => {
     const ok = await confirm({ title: `Mark ${m.to.name} as replied?`, body: "This stops the sequence: scheduled follow-ups are cancelled.", confirm: "Mark replied" });
-    if (ok) replied.mutate(m.id);
+    if (ok) replied.mutate({ id: m.id, positive: false });
   };
+  const good = async (m: Message) => {
+    const ok = await confirm({
+      title: `Good reply from ${m.to.name}?`,
+      body: "Follow-ups stop, and this email's approach (its angle, structure and call to action) will guide new drafts for similar people. Its facts are never reused.",
+      confirm: "Learn from it",
+    });
+    if (ok) replied.mutate({ id: m.id, positive: true });
+  };
+  const forget = useMutation({
+    mutationFn: api.deleteWin,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["wins"] }),
+    onError: (e) => toast.error("Couldn't remove it", errorMessage(e)),
+  });
 
   return (
     <div>
@@ -123,7 +139,7 @@ export default function Sent() {
                         <MessagePill status={m.status} />
                         <When m={m} />
                         <span className="w-full truncate text-[13px]">{m.step > 0 && `Follow-up ${m.step} · `}{m.subject}</span>
-                        {m.status === "sent" && <button className="font-medium text-accent" onClick={() => mark(m)}>Mark replied</button>}
+                        {m.status === "sent" && <span className="flex gap-3"><button className="font-medium text-accent" onClick={() => good(m)}>Good reply</button><button className="text-muted" onClick={() => mark(m)}>Replied</button></span>}
                       </div>
                     </td>
                     <td className="hidden px-3 py-3 md:table-cell">
@@ -138,7 +154,10 @@ export default function Sent() {
                     <td className="hidden px-3 py-3 md:table-cell"><Delivered m={m} /></td>
                     <td className="hidden px-4 py-3 text-right md:table-cell">
                       {m.status === "sent" && (
-                        <Button size="sm" variant="ghost" icon={<MessageSquareReply className="h-3.5 w-3.5" />} onClick={() => mark(m)}>Replied</Button>
+                        <span className="inline-flex gap-1">
+                          <Button size="sm" variant="ghost" icon={<ThumbsUp className="h-3.5 w-3.5" />} onClick={() => good(m)} title="A good reply: learn from this email">Good reply</Button>
+                          <Button size="sm" variant="ghost" icon={<MessageSquareReply className="h-3.5 w-3.5" />} onClick={() => mark(m)}>Replied</Button>
+                        </span>
                       )}
                     </td>
                   </tr>
@@ -148,6 +167,29 @@ export default function Sent() {
           )}
         </Panel>
       )}
+      <Panel className="mt-6">
+        <div className="border-b border-rule px-4 py-3">
+          <h2 className="text-[15px] font-medium">Learning from good replies</h2>
+          <p className="mt-0.5 text-[13px] text-muted">Emails you marked as a good reply. New drafts for similar people reuse their approach; facts always come from the new company's own pages.</p>
+        </div>
+        {wins.isPending ? (
+          <div className="p-4"><SkeletonRows rows={2} /></div>
+        ) : !wins.data?.length ? (
+          <p className="px-4 py-5 text-[13px] text-muted">Nothing yet. When someone replies well, choose <span className="text-ink">Good reply</span> on that email above.</p>
+        ) : (
+          <ul className="divide-y divide-rule">
+            {wins.data.map((w) => (
+              <li key={w.id} className="flex items-start gap-3 px-4 py-3">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px] font-medium">{w.subject}</p>
+                  <p className="truncate text-xs text-muted">{w.persona || "Contact"}{w.company ? ` at ${w.company}` : ""} · guided {w.uses} draft{w.uses === 1 ? "" : "s"}</p>
+                </div>
+                <Button size="sm" variant="ghost" icon={<Trash2 className="h-3.5 w-3.5" />} loading={forget.isPending && forget.variables === w.id} onClick={() => forget.mutate(w.id)}>Stop using</Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
     </div>
   );
 }

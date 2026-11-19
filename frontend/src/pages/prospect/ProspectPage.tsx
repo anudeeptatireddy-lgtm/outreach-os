@@ -347,8 +347,18 @@ function WhyEmail({ trail, p }: { trail: ProspectTrail; p: ProspectDetail }) {
   if (!d && !msg) return <NotReached>{trail.poc ? "Not reached yet: the draft is written after pain points are picked." : "Not reached: a draft needs a qualified company and a contact."}</NotReached>;
   const hooks = msg?.hook_map.length ? msg.hook_map : d?.hook_map ?? [];
   const v = d?.validation;
+  const learned = p.learned_from ?? [];
   return (
     <div className="flex flex-col gap-4">
+      {learned.length > 0 && (
+        <Panel className="px-4 py-3">
+          <p className="text-[13px] font-medium">Guided by {learned.length} email{learned.length > 1 ? "s" : ""} that got a good reply</p>
+          <p className="mt-0.5 text-xs text-muted">The writer reused their approach (angle, structure, call to action). Every fact here still comes from this company's own pages.</p>
+          <ul className="mt-2 flex flex-col gap-1 text-[13px]">
+            {learned.map((w) => <li key={w.id} className="truncate">“{w.subject}” <span className="text-muted">· {w.persona || "contact"}{w.company ? ` at ${w.company}` : ""}</span></li>)}
+          </ul>
+        </Panel>
+      )}
       {d && (
         <Panel>
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-rule px-4 py-2.5">

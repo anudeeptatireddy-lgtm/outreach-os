@@ -418,8 +418,14 @@ export type ProspectTrail = {
   } | null;
 };
 
+export type WinRef = { id: number; subject: string; persona: string; company: string };
+
+/** An email that earned a good reply; new drafts for similar people reuse its approach. */
+export type Win = WinRef & { message_id: number; body: string; note: string; uses: number; created_at: string };
+
 export type ProspectDetail = ProspectRow & {
   summary: string | null; // one-line plain-English verdict
+  learned_from?: WinRef[]; // good replies that guided this draft
   trail: ProspectTrail;
   messages: Message[];
   events: Event[];

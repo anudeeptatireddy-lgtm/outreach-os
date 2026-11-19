@@ -387,3 +387,50 @@ def test_hunter_out_of_credits_does_not_pause_the_campaign(client, monkeypatch):
     assert c.get(f"/api/campaigns/{camp['id']}").json()["status"] == "running"
     rows = c.get(f"/api/campaigns/{camp['id']}/prospects").json()
     assert {p["status"] for p in rows} == {"no_contact"}
+
+
+def test_good_reply_feeds_the_next_drafts(client, monkeypatch):
+    """The feedback loop: an email marked as a good reply guides drafts for similar people."""
+    from outreach.demo import DemoLLM
+
+    prompts = []
+    real = DemoLLM.generate_structured
+
+    def spy(self, **kw):
+        if kw.get("purpose") == "draft":
+            prompts.append(kw["prompt"])
+        return real(self, **kw)
+
+    monkeypatch.setattr(DemoLLM, "generate_structured", spy)
+    c = client
+    signup(c)
+    c.patch("/api/settings", json={"sending": {"send_window": OPEN_WINDOW}})
+    make_campaign(c, domains=["ledgerloop.io"], followups=[])
+    drain(c)
+    assert all("<winning_email" not in p for p in prompts)  # nothing learned yet
+    msg = c.get("/api/messages", params={"status": "needs_review"}).json()[0]
+    c.post(f"/api/messages/{msg['id']}/approve", json={})
+    drain(c)
+    assert c.post(f"/api/messages/{msg['id']}/mark-replied", json={"positive": True, "note": "loved the hook"}).status_code == 200
+    c.post(f"/api/messages/{msg['id']}/mark-replied", json={"positive": True})  # idempotent
+    wins = c.get("/api/wins").json()
+    assert len(wins) == 1 and wins[0]["subject"] == msg["subject"] and wins[0]["note"] == "loved the hook"
+
+    prompts.clear()
+    camp = make_campaign(c, name="Next", domains=["payrollpilot.com"], followups=[])
+    drain(c)
+    assert prompts and "<winning_email" in prompts[0] and msg["subject"] in prompts[0]
+    assert "Do NOT copy their facts" in prompts[0]
+    p = c.get(f"/api/campaigns/{camp['id']}/prospects").json()[0]
+    assert c.get(f"/api/prospects/{p['id']}").json()["trail"]["draft"]["learned_from"] == [wins[0]["id"]]
+    assert c.get("/api/wins").json()[0]["uses"] >= 1
+
+    assert c.delete(f"/api/wins/{wins[0]['id']}").json()["ok"]  # forget it
+    assert c.get("/api/wins").json() == []
+
+
+def test_role_groups_rank_the_closest_winner_first():
+    from outreach.server.pipeline import role_group
+
+    assert role_group("Head of Security") == role_group("CISO") == "security"
+    assert role_group("CTO") == "engineering" and role_group("Co-founder & CEO") == "founder"

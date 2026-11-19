@@ -89,6 +89,7 @@ class Context:
     playbook: Playbook | None = None
     manual_contact: object | None = None  # a HunterContact entered by hand skips the Hunter search
     draft_instructions: str | None = None
+    winning_examples: list | None = None  # WinningExample: emails that got a positive reply
 
 
 def _refresh_counters(rec: RunRecord, ctx: Context) -> None:

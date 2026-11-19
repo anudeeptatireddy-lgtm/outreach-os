@@ -1,6 +1,7 @@
 // Typed API client. Every call goes through `request`, which talks to the FastAPI backend
 // (cookie session, JSON) or, when VITE_MOCK=1, to the in-memory mock in ./mock.ts.
 import type {
+  Win,
   AddProspectsBody,
   AddProspectsResult,
   AnalyticsOverview,
@@ -168,7 +169,10 @@ export const api = {
   rejectMessage: (id: number) => request<Message>("POST", `/api/messages/${id}/reject`, {}),
   regenerateMessage: (id: number, instructions?: string) =>
     request<Message>("POST", `/api/messages/${id}/regenerate`, instructions ? { instructions } : {}),
-  markReplied: (id: number) => request<Message>("POST", `/api/messages/${id}/mark-replied`, {}),
+  markReplied: (id: number, b: { positive?: boolean; note?: string } = {}) =>
+    request<Message>("POST", `/api/messages/${id}/mark-replied`, b),
+  wins: () => request<Win[]>("GET", "/api/wins"),
+  deleteWin: (id: number) => request<{ ok: true }>("DELETE", `/api/wins/${id}`),
   bulkApprove: (ids: number[]) => request<BulkApproveResult>("POST", "/api/messages/bulk-approve", { ids }),
 
   // Worker: on Vercel there is no background worker; the open dashboard pumps this.

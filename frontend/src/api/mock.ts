@@ -1638,6 +1638,7 @@ on("POST", "/api/messages/:id/regenerate", async (m, b) => {
   }
   return stripMsg(clone(msg));
 });
+on("GET", "/api/wins", () => []);
 on("POST", "/api/messages/:id/mark-replied", (m) => {
   const msg = getMessage(intParam(m));
   const p = db.prospects.find((x) => x.id === msg.prospect_id);

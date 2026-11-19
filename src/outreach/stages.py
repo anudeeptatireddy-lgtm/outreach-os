@@ -180,6 +180,7 @@ def stage_draft(ctx: Context, domain: str, prev: dict) -> DraftOutput:
         contact=prev["poc"].contact,
         playbook=getattr(ctx, "playbook", None),
         instructions=getattr(ctx, "draft_instructions", None),
+        winners=getattr(ctx, "winning_examples", None),
     )
     if out.validation is not None and not out.validation.ok:
         raise StopStage("rejected_draft", "; ".join(out.validation.failures)[:200], output=out)

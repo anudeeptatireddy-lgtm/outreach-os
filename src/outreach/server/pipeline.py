@@ -25,7 +25,7 @@ from outreach.draft import _company, build_evidence_pack, validate_draft
 from outreach.models import CompanyProfile, DraftLLM, ClaimUsed, HunterContact
 from outreach.playbook import Playbook
 from outreach.server.config import ServerConfig
-from outreach.server.db import Campaign, EventRow, HunterCacheRow, Message, PlaybookRow, Prospect, Workspace, utcnow
+from outreach.server.db import Campaign, EventRow, HunterCacheRow, Message, WinRow, PlaybookRow, Prospect, Workspace, utcnow
 from outreach.server.security import Crypto
 from outreach.server.workspace import get_secret, hunter_usage, log_event, record_hunter_call, secret_source, settings_of
 from outreach.skeleton import Context
@@ -195,6 +195,42 @@ def _summary(q: dict) -> str:
     return f"{verdict}, score {rng} of 100" + (f": {tail}" if tail else "")
 
 
+ROLE_GROUPS = (
+    ("security", ("security", "ciso", "infosec", "trust", "risk")),
+    ("compliance", ("compliance", "grc", "audit", "privacy", "legal")),
+    ("engineering", ("cto", "engineer", "technology", "devops", "platform", "infrastructure", "it ")),
+    ("founder", ("founder", "ceo", "owner", "president", "chief executive")),
+    ("finance", ("cfo", "finance", "controller")),
+    ("operations", ("coo", "operations")),
+)
+
+
+def role_group(title: str) -> str:
+    t = f" {(title or '').lower()} "
+    return next((g for g, words in ROLE_GROUPS if any(w in t for w in words)), "other")
+
+
+def winning_examples(db: Session, ws_id: int, playbook_id: int | None, title: str, limit: int = 3) -> list:
+    """The feedback loop: emails that earned a positive reply, best match first (same playbook,
+    then same kind of role, then most recent), handed to the writer as approaches to reuse."""
+    from outreach.models import WinningExample
+
+    rows = list(db.scalars(select(WinRow).where(WinRow.workspace_id == ws_id)
+                           .order_by(WinRow.created_at.desc()).limit(200)))
+    if not rows:
+        return []
+    group = role_group(title)
+
+    def rank(w: WinRow) -> int:
+        return (2 if w.playbook_id == playbook_id else 0) + (3 if role_group(w.persona) == group else 0)
+
+    best = sorted(rows, key=rank, reverse=True)[:limit]  # stable: recency breaks ties
+    for w in best:
+        w.uses = (w.uses or 0) + 1
+    return [WinningExample(id=w.id, subject=w.subject, body=w.body, persona=w.persona, company=w.company)
+            for w in best]
+
+
 def _contact_dict(c: HunterContact, source: str) -> dict:
     name = " ".join(p for p in (c.first_name, c.last_name) if p)
     return {"name": name, "first_name": c.first_name, "last_name": c.last_name, "title": c.position,
@@ -226,6 +262,9 @@ def advance(db: Session, prospect: Prospect, crypto: Crypto, cfg: ServerConfig) 
             return
 
     ctx = build_context(db, ws, campaign, pb, crypto, cfg)
+    if stage == "draft":
+        title = ((trail.get("poc") or {}).get("contact") or {}).get("position", "")
+        ctx.winning_examples = winning_examples(db, ws.id, campaign.playbook_id, title)
     if prospect.manual_contact:
         ctx.manual_contact = HunterContact(**{**prospect.manual_contact, "source": "manual"})
     try:
@@ -417,6 +456,7 @@ def regenerate(db: Session, msg: Message, instructions: str | None, crypto: Cryp
     ctx = build_context(db, ws, campaign, pb, crypto, cfg)
     if msg.step == 0:
         ctx.draft_instructions = instructions
+        ctx.winning_examples = winning_examples(db, ws.id, campaign.playbook_id, msg.to_title or "")
         prev = _prev(prospect.trail, "draft")
         try:
             out = stages_mod.stage_draft(ctx, prospect.domain, prev)

@@ -378,6 +378,17 @@ class DraftOutput(BaseModel):
     hook_map: list[HookLink] = Field(default_factory=list)
     evidence_pack: list[EvidenceItem] = Field(default_factory=list)
     validation: DraftValidation | None = None
+    learned_from: list[int] = Field(default_factory=list)  # ids of winning emails shown to the writer
+
+
+class WinningExample(BaseModel):
+    """An email that earned a positive reply: its approach is reused, never its facts."""
+
+    id: int
+    subject: str
+    body: str
+    persona: str = ""
+    company: str = ""
 
 
 class SendResult(BaseModel):
