@@ -251,6 +251,15 @@ def advance(db: Session, prospect: Prospect, crypto: Crypto, cfg: ServerConfig) 
     except SystemicError:
         raise
     except Exception as exc:  # noqa: BLE001
+        from outreach.hunter import HunterAuthError, HunterQuotaError
+
+        if stage == "poc" and isinstance(exc, (HunterAuthError, HunterQuotaError)):
+            # Hunter out of credits or not set up: this company needs a contact by hand, but the
+            # campaign keeps going (research and scoring do not depend on Hunter).
+            why = "has no searches left" if isinstance(exc, HunterQuotaError) else "is not set up"
+            _stop(db, prospect, trail, "poc", "no_contact",
+                  f"Hunter {why}: add a contact by hand to draft the email", None)
+            return
         _classify_and_raise(exc, ctx.settings)
         prospect.attempts += 1
         msg = redact(f"{stage}: {type(exc).__name__}: {exc}", ctx.settings)[:500]

@@ -12,7 +12,14 @@ for name in GEMINI_API_KEY HUNTER_API_KEY HUNTER_MONTHLY_BUDGET RESEND_API_KEY G
     echo "skip  $name (empty)"
     continue
   fi
-  printf '%s' "$value" | vercel env add "$name" production --force >/dev/null 2>&1 \
-    && echo "set   $name" || echo "FAIL  $name (run: vercel env add $name production)"
+  if err=$(printf '%s' "$value" | vercel env add "$name" production --force 2>&1); then
+    echo "set   $name"
+  else
+    echo "FAIL  $name:"
+    printf '%s\n' "$err" | grep -iE "error|not|denied|login|scope|link" | head -3 | sed 's/^/      /'
+  fi
 done
+echo
+echo "Now on Vercel (production):"
+vercel env ls production 2>/dev/null | awk 'NF && $2 == "Hidden" {print "  " $1}'
 echo "Done. Redeploy so the new keys take effect: vercel --prod"

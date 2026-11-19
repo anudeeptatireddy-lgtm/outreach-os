@@ -16,6 +16,15 @@ SAMPLES = ["ledgerloop.io", "payrollpilot.com", "claimsbridge.ai", "fieldnote.de
 OPEN_WINDOW = {"start_hour": 0, "end_hour": 24, "timezone": "UTC", "weekdays_only": False}
 
 
+@pytest.fixture(autouse=True)
+def _fresh_rate_limits():
+    """The limiters are per process; each test starts with empty windows."""
+    from outreach.server import app as app_mod
+
+    for name in ("_login_limiter", "_guest_limiter", "_test_mail_limiter"):
+        getattr(app_mod, name)._hits.clear()
+
+
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
     for var in ("GEMINI_API_KEY", "HUNTER_API_KEY", "RESEND_API_KEY", "DATABASE_URL", "VERCEL"):
@@ -361,3 +370,20 @@ def test_owner_gemini_key_is_capped_per_workspace_and_site(tmp_path, monkeypatch
         assert owner_key_cap(db, b, cfg) is None                      # site total is now 3
         assert "daily limit of 3" in owner_key_cap(db, b, cfg)       # then the site-wide cap
         assert owner_key_cap(db, own, cfg) is None                    # own key: no cap
+
+
+def test_hunter_out_of_credits_does_not_pause_the_campaign(client, monkeypatch):
+    from outreach.demo import DemoHunter
+    from outreach.hunter import HunterQuotaError
+
+    def no_credits(self, domain):
+        raise HunterQuotaError("Hunter 429 usage limit reached (too_many_requests)")
+
+    monkeypatch.setattr(DemoHunter, "domain_search", no_credits)
+    c = client
+    signup(c)
+    camp = make_campaign(c, domains=["ledgerloop.io", "payrollpilot.com"], hunter_live=True)
+    drain(c)
+    assert c.get(f"/api/campaigns/{camp['id']}").json()["status"] == "running"
+    rows = c.get(f"/api/campaigns/{camp['id']}/prospects").json()
+    assert {p["status"] for p in rows} == {"no_contact"}
