@@ -14,6 +14,50 @@ them) and **why this email** (each sentence mapped to its evidence).
 It works for any B2B product through *playbooks*, and ships with a tuned **Sprinto** playbook
 (compliance automation for SOC 2, ISO 27001 and GDPR).
 
+## Try the live build
+
+**https://outreach-os-self.vercel.app**: no sign-in. Each browser gets its own private
+workspace, so nothing you do is visible to anyone else. About 10 minutes end to end.
+
+**1. Demo run (sample data, about 2 minutes)**
+1. Click **Try the demo**. The workspace opens in demo mode with the Sprinto playbook.
+2. **Campaigns → New campaign**. Paste these sample domains and click **Create and start research**:
+   ```
+   ledgerloop.io
+   payrollpilot.com
+   claimsbridge.ai
+   fieldnote.dev
+   pocketpals.app
+   globalbank-cloud.com
+   stealthco.xyz
+   quietops.io
+   ```
+   They cover every outcome: qualified, disqualified (a consumer app, an already-certified
+   bank), not enough data, and qualified with no contact.
+3. Open any company to read its **decision trail**: the pages read, each fact with its quote,
+   the score breakdown, why this person, and which evidence backs each sentence of the email.
+4. **Review**: edit a draft, then approve it. Try adding an unsupported claim such as "we are
+   the fastest in the market". The validator blocks approval until it is removed. Approved
+   emails show under **Sent** as "demo, not sent".
+
+**2. Real companies (live research with Gemini)**
+1. **Settings → Demo mode**: switch it off.
+2. Create a campaign with real domains, for example `openstatus.dev`. The app reads the live
+   website, scores it against the rubric and drafts from what it found. Most well-known
+   companies are disqualified because they already hold SOC 2; that is the rubric working.
+3. Contacts come from Hunter, whose free plan runs out each month. When it does, the company
+   shows **Add a contact**. Enter any name, title and email to see the draft written.
+
+**3. Sending**
+- Approved emails go out in **test mode**: to the site owner's inbox, with the real recipient
+  shown in the subject. Nothing is ever sent to a prospect from this site.
+- To receive the test emails yourself, add your own Resend key (or Gmail address and app
+  password) in **Settings → Integrations** and set your address in **Settings → Sending**.
+
+**Limits on this site**: on the site's own keys, real research is capped at 10 companies per
+workspace and 40 site-wide per day, and the shared email account sends at most 50 test emails a
+day. Adding your own Gemini key in **Settings → Integrations** lifts the research cap.
+
 ## How it works
 
 Seven steps per company, with no human decision needed in between:

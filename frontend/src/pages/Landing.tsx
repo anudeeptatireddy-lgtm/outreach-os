@@ -41,11 +41,12 @@ function Nav() {
           <a href="#trail" className="hover:text-ink">Decision trail</a>
           <a href="#playbooks" className="hover:text-ink">Playbooks</a>
           <a href="#guardrails" className="hover:text-ink">Guardrails</a>
+          <a href="#try" className="hover:text-ink">Try it</a>
         </nav>
         <div className="ml-auto flex items-center gap-2">
           <span className="hidden font-mono text-[11px] text-muted lg:inline"><Clock /></span>
           <ThemeToggle />
-                    <Link to="/app" className="inline-flex h-9 items-center rounded-full bg-ink px-4 text-[14px] font-medium text-ground hover:bg-ink/90">Try the demo</Link>
+          <Link to="/app" className="inline-flex h-9 items-center rounded-full bg-ink px-4 text-[14px] font-medium text-ground hover:bg-ink/90">Try the demo</Link>
         </div>
       </div>
     </header>
@@ -201,6 +202,51 @@ function Guardrails() {
   );
 }
 
+const SAMPLE_DOMAINS = "ledgerloop.io\npayrollpilot.com\nclaimsbridge.ai\nfieldnote.dev\npocketpals.app\nglobalbank-cloud.com\nstealthco.xyz\nquietops.io";
+
+function TryIt() {
+  const steps = [
+    { t: "Open the app", b: <>No sign-in. Your browser gets its own private workspace, in demo mode, with the Sprinto playbook.</> },
+    { t: "Run a demo campaign", b: <><span className="text-ink">Campaigns → New campaign</span>, paste the sample domains below and start. They cover every outcome: qualified, disqualified, too little data, no contact.</> },
+    { t: "Read the trail, then review", b: <>Open a company to see each fact's quote, the score breakdown and why this person. In <span className="text-ink">Review</span>, edit a draft and approve it. Add a claim like "we are the fastest" and approval is blocked.</> },
+    { t: "Try real companies", b: <><span className="text-ink">Settings → Demo mode</span> off, then a campaign with real domains such as openstatus.dev. If Hunter's free searches are used up, choose <span className="text-ink">Add a contact</span> to see the draft.</> },
+  ];
+  return (
+    <section id="try" aria-labelledby="try-h" className="border-t border-line bg-surface/60">
+      <div className="mx-auto max-w-[1240px] px-5 py-24 sm:px-8 lg:py-28">
+        <Label n="05">Try it</Label>
+        <h2 id="try-h" data-scramble className="mt-4 max-w-[20ch] font-display text-[44px] leading-[46px] tracking-[-0.02em] sm:text-[56px] sm:leading-[58px]">Test it yourself in ten minutes.</h2>
+        <ol className="mt-12 grid gap-px overflow-hidden rounded-xl border border-line bg-line md:grid-cols-2 lg:grid-cols-4">
+          {steps.map((x, i) => (
+            <li key={x.t} className="bg-surface p-6">
+              <span className="font-mono text-[12px] text-accent">{String(i + 1).padStart(2, "0")}</span>
+              <h3 className="mt-3 text-[17px] font-medium">{x.t}</h3>
+              <p className="mt-1.5 text-[14px] leading-6 text-muted">{x.b}</p>
+            </li>
+          ))}
+        </ol>
+        <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+          <div className="rounded-xl border border-line bg-surface p-5">
+            <p className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted">Sample domains</p>
+            <pre className="mt-3 font-mono text-[13px] leading-6 text-ink">{SAMPLE_DOMAINS}</pre>
+          </div>
+          <div className="rounded-xl border border-line bg-surface p-5 text-[14px] leading-6 text-muted">
+            <p className="font-mono text-[11px] uppercase tracking-[0.08em]">Good to know</p>
+            <ul className="mt-3 flex list-disc flex-col gap-2 pl-4">
+              <li>Approved emails go out in test mode, to the site owner's inbox. Nothing is ever sent to a prospect from this site.</li>
+              <li>To receive test emails yourself, add your own Resend or Gmail key in <span className="text-ink">Settings → Integrations</span>.</li>
+              <li>On this site's keys, real research is capped at 10 companies per workspace a day. Your own Gemini key lifts it.</li>
+            </ul>
+          </div>
+        </div>
+        <Link to="/app" className="mt-10 inline-flex h-11 items-center gap-2 rounded-full bg-ink px-5 text-[15px] font-medium text-ground hover:bg-ink/90">
+          Open the app <ArrowRight className="h-4 w-4" />
+        </Link>
+      </div>
+    </section>
+  );
+}
+
 function FinalCta() {
   return (
     <section aria-labelledby="cta-h" className="grain relative overflow-hidden">
@@ -235,13 +281,14 @@ export default function Landing() {
         <TrailShowcase />
         <Playbooks />
         <Guardrails />
+        <TryIt />
         <FinalCta />
       </main>
       <footer className="mx-auto flex max-w-[1240px] flex-wrap items-center gap-x-6 gap-y-3 px-5 py-8 sm:px-8">
         <Wordmark />
         <span className="font-mono text-[11px] text-muted">Evidence-cited outbound for B2B teams</span>
         <span className="ml-auto flex gap-4 text-[13px] text-muted">
-                    <Link to="/app" className="hover:text-ink">Open the app</Link>
+          <Link to="/app" className="hover:text-ink">Open the app</Link>
         </span>
       </footer>
     </div>
