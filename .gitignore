@@ -1,0 +1,22 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.cache/
+out/
+*.jsonl
+*.tmp
+*.egg-info/
+build/
+dist/
+.vercel
+
+# outreach-os
+data/
+node_modules/
+frontend/dist/
+.vercel
+.claude/
