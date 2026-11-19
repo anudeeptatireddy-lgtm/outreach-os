@@ -60,6 +60,8 @@ day. Adding your own Gemini key in **Settings → Integrations** lifts the resea
 
 ## How it works
 
+Components map (swimlanes, loops and stack): [docs/components-map.html](docs/components-map.html).
+
 Seven steps per company, with no human decision needed in between:
 
 | # | Step | What happens |
