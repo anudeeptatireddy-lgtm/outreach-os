@@ -1,0 +1,224 @@
+"""The six skeleton stages. Every external call goes through `ctx`; stages never import
+an SDK. Each stage is `(ctx, domain, prev) -> BaseModel` and `prev` holds the typed
+outputs of the earlier stages.
+
+No prompt may contain a timestamp, run id or random value: it would change the LLM
+cache key and break "second run makes no new Gemini calls".
+"""
+
+from __future__ import annotations
+
+import functools
+import hashlib
+from collections import Counter
+from typing import TYPE_CHECKING
+
+from pydantic import BaseModel
+
+from outreach.agent import run_research
+from outreach.extract import extract_profile
+from outreach.models import (
+    CompanyProfile,
+    DraftOutput,
+    EmailDraft,
+    ExtractOutput,
+    HunterContact,
+    PocOutput,
+    PageResult,
+    Qualification,
+    ResearchOutcome,
+    RubricScore,
+    ScrapeOutput,
+    SendResult,
+)
+from outreach.draft import build_draft
+from outreach.extract import extract_system
+from outreach.poc import select_contact, size_band
+from outreach.pagegate import is_usable, page_gate
+from outreach.qualify import qualify
+from outreach.scrape import scrape_domain
+from outreach.send import send_email
+
+if TYPE_CHECKING:  # avoid an import cycle with skeleton.py
+    from outreach.skeleton import Context
+
+
+class StopStage(Exception):
+    """An expected, logged stop (not a failure): the run ends with status `stopped`."""
+
+    def __init__(self, reason: str, detail: str = "", output: BaseModel | None = None):
+        super().__init__(f"{reason}: {detail}" if detail else reason)
+        self.reason = reason
+        self.detail = detail
+        self.output = output  # a typed record stored with the stopped stage (e.g. Qualification)
+
+
+class DomainUnreachable(Exception):
+    """Every fetch for the domain failed at transport level (dead DNS, timeout, 5xx). A plain
+    failure, never a StopStage: the batch records the domain as `failed` and carries on."""
+
+
+def usable_pages(pages: list[PageResult]) -> list[PageResult]:
+    """The single usability filter, applied at the extract call site for any fetcher: status ok,
+    at least MIN_PAGE_CHARS of text and no block or challenge signature (`pagegate.is_usable`)."""
+    return [p for p in pages if is_usable(p)]
+
+
+def pick_contact(result: dict) -> HunterContact | None:
+    emails = ((result.get("response") or {}).get("data") or {}).get("emails") or []
+    named = [e for e in emails if e.get("first_name") and e.get("position")]
+    if not named:
+        return None
+    named.sort(key=lambda e: e.get("confidence") or 0, reverse=True)
+    best = named[0]
+    return HunterContact(
+        first_name=best["first_name"],
+        last_name=best.get("last_name"),
+        email=best["value"],
+        position=best["position"],
+        confidence=best.get("confidence"),
+        source=result["source"],
+    )
+
+
+def _page_reason(page: PageResult) -> str:
+    return page.reason or page_gate(page.text) or page.status
+
+
+def stage_scrape(ctx: Context, domain: str, prev: dict) -> ScrapeOutput:
+    out = scrape_domain(ctx.fetcher, domain)
+    if out.usable == 0:
+        if out.pages and all(p.status == "error" for p in out.pages):
+            raise DomainUnreachable(f"all {len(out.pages)} fetches failed: {out.pages[0].error}")
+        counts = Counter(_page_reason(p) for p in out.pages)
+        breakdown = ", ".join(f"{reason}={n}" for reason, n in sorted(counts.items()))
+        raise StopStage("insufficient_data", f"0 usable of {len(out.pages)} pages ({breakdown})")
+    return out
+
+
+def stage_extract(ctx: Context, domain: str, prev: dict) -> ExtractOutput:
+    return extract_profile(
+        ctx.llm, ctx.settings.gemini_model_fast, usable_pages(prev["scrape"].pages), system=_extract_system(ctx)
+    )
+
+
+def _extract_system(ctx: Context) -> str | None:
+    pb = getattr(ctx, "playbook", None)
+    if pb is None:
+        return None
+    return extract_system(pb.research.focus_label, pb.research.focus_description)
+
+
+def _research(
+    ctx: Context,
+    domain: str,
+    profile: CompanyProfile,
+    pages: list[PageResult],
+    score: RubricScore,
+) -> ResearchOutcome:
+    """The bounded research loop, bound to this run's LLM, fetcher, domain and models."""
+    return run_research(
+        ctx.llm,
+        ctx.fetcher,
+        domain=domain,
+        smart_model=ctx.settings.gemini_model_smart,
+        fast_model=ctx.settings.gemini_model_fast,
+        profile=profile,
+        pages=pages,
+        loaded=ctx.rubric,
+        score=score,
+        settings=ctx.settings,
+        extract_system=_extract_system(ctx),
+    )
+
+
+def stage_qualify(ctx: Context, domain: str, prev: dict) -> Qualification:
+    """Score the validated profile with the hashed rubric; a gray-band company gets the bounded
+    research loop first. Anything but `qualified` stops the run here, so Hunter is never called
+    for a rejected or undecided company."""
+    q = qualify(
+        prev["extract"].profile,
+        prev["scrape"].pages,
+        ctx.rubric,
+        research=functools.partial(_research, ctx, domain),
+    )
+    if q.verdict != "qualified":
+        raise StopStage(q.verdict, q.reason[:200], output=q)
+    return q
+
+
+def stage_poc(ctx: Context, domain: str, prev: dict) -> PocOutput:
+    """One cache-first Hunter Domain Search (qualified companies only: the qualify stage stops
+    everything else before this runs), then deterministic ranking by company-size band."""
+    manual = getattr(ctx, "manual_contact", None)
+    if manual is not None:
+        return PocOutput(
+            contact=manual,
+            band=size_band(prev["qualify"].profile)[0],
+            band_basis=size_band(prev["qualify"].profile)[1],
+            reason=f"{manual.first_name} {manual.last_name or ''}".strip()
+            + f", {manual.position}: entered manually (Hunter not searched)",
+            top_candidates=[],
+            candidates_seen=0,
+            risks=["contact entered by hand; address not verified by Hunter"],
+        )
+    result = ctx.hunter.domain_search(domain)
+    pb = getattr(ctx, "playbook", None)
+    poc = select_contact(result, prev["qualify"].profile, pb.personas if pb is not None else None)
+    if poc is None:
+        raise StopStage("no_contact", "Hunter returned no suitable named person for this company")
+    return poc
+
+
+def stage_draft(ctx: Context, domain: str, prev: dict) -> DraftOutput:
+    """Two grounded pain points, then a validated draft (one regeneration), else `rejected_draft`."""
+    out = build_draft(
+        ctx.llm,
+        smart_model=ctx.settings.gemini_model_smart,
+        fast_model=ctx.settings.gemini_model_fast,
+        profile=prev["qualify"].profile,
+        contact=prev["poc"].contact,
+        playbook=getattr(ctx, "playbook", None),
+        instructions=getattr(ctx, "draft_instructions", None),
+    )
+    if out.validation is not None and not out.validation.ok:
+        raise StopStage("rejected_draft", "; ".join(out.validation.failures)[:200], output=out)
+    return out
+
+
+def stage_send(ctx: Context, domain: str, prev: dict) -> SendResult:
+    draft: EmailDraft = prev["draft"].draft
+    digest = hashlib.sha256((draft.subject + draft.body).encode()).hexdigest()[:16]
+    return send_email(
+        ctx.settings,
+        draft.subject,
+        draft.body,
+        dry_run=ctx.dry_run,
+        intended=prev["poc"].contact,
+        idempotency_key=f"outreach-{domain}-{digest}",
+        sender=ctx.sender,
+        out=ctx.out,
+    )
+
+
+STAGES = [
+    ("scrape", stage_scrape),
+    ("extract", stage_extract),
+    ("qualify", stage_qualify),
+    ("poc", stage_poc),
+    ("draft", stage_draft),
+    ("send", stage_send),
+]
+
+
+STAGE_FUNCS = dict(STAGES)
+
+# Typed output of every stage: lets the web app rebuild `prev` from plain JSON.
+STAGE_MODELS: dict[str, type[BaseModel]] = {
+    "scrape": ScrapeOutput,
+    "extract": ExtractOutput,
+    "qualify": Qualification,
+    "poc": PocOutput,
+    "draft": DraftOutput,
+    "send": SendResult,
+}
