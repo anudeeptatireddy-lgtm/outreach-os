@@ -16,7 +16,8 @@ export function useMe() {
       try {
         return await api.me();
       } catch (e) {
-        if (e instanceof ApiError && e.status === 401) return null;
+        // No sign-in: a first visit gets its own guest workspace.
+        if (e instanceof ApiError && e.status === 401) return await api.guest();
         throw e;
       }
     },
@@ -24,7 +25,7 @@ export function useMe() {
   });
 }
 
-/** Gate for the app: login when signed out, onboarding until the workspace is onboarded. */
+/** Gate for the app: creates a guest workspace on first visit, onboarding until it is onboarded. */
 export function RequireSession({ children }: { children: ReactNode }) {
   const me = useMe();
   const qc = useQueryClient();
@@ -41,7 +42,12 @@ export function RequireSession({ children }: { children: ReactNode }) {
       </div>
     );
   }
-  if (!me.data) return <Navigate to={`/login?next=${encodeURIComponent(loc.pathname + loc.search)}`} replace />;
+  if (!me.data) return null;
+  try {
+    sessionStorage.removeItem("guest-reload");
+  } catch {
+    /* storage unavailable */
+  }
   if (!me.data.workspace.onboarded && loc.pathname !== "/onboarding") return <Navigate to="/onboarding" replace />;
   return (
     <SessionCtx.Provider value={{ session: me.data, refresh: () => qc.invalidateQueries({ queryKey: qk.me }) }}>

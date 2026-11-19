@@ -47,6 +47,7 @@ type Provider = "gmail" | "resend";
 | POST | `/api/auth/login` | `{email, password}` | `Session` |
 | POST | `/api/auth/logout` | - | `{ok: true}` |
 | GET | `/api/auth/me` | - | `Session` or 401 |
+| POST | `/api/auth/guest` | - | `Session` (no sign-in: returns this browser's workspace, creating a private guest workspace on first visit; the dashboard calls it when `/me` is 401) |
 
 ```ts
 type Session = {

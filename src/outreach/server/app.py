@@ -35,6 +35,8 @@ from outreach.server.workspace import SECRET_NAMES, get_secret, log_event, set_s
 log = logging.getLogger("outreach.app")
 _EMAIL = re.compile(r"^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$")
 _login_limiter = RateLimiter(10, 60)
+_guest_limiter = RateLimiter(30, 3600)
+_test_mail_limiter = RateLimiter(3, 3600)
 
 
 # --------------------------------------------------------------------------- app factory
@@ -116,9 +118,10 @@ class LoginIn(BaseModel):
     password: str
 
 
-def _session_payload(user: User, ws: Workspace) -> dict:
+def _session_payload(user: User, ws: Workspace, open_access: bool = False) -> dict:
     return {"user": {"id": user.id, "email": user.email, "name": user.name},
-            "workspace": {"id": ws.id, "name": ws.name, "onboarded": ws.onboarded, "demo_mode": ws.demo_mode}}
+            "workspace": {"id": ws.id, "name": ws.name, "onboarded": ws.onboarded, "demo_mode": ws.demo_mode},
+            "open_access": open_access}
 
 
 def _set_cookie(resp: Response, svc: Services, user_id: int) -> None:
@@ -145,7 +148,7 @@ def _core_router():
     @r.get("/api/health")
     def health(svc: Services = Depends(services)):
         worker = "running" if svc.worker is not None and svc.worker.running else "stopped"
-        return {"ok": True, "version": VERSION, "worker": worker}
+        return {"ok": True, "version": VERSION, "worker": worker, "open_access": svc.cfg.open_access}
 
     # ---- auth
     @r.post("/api/auth/signup")
@@ -176,7 +179,38 @@ def _core_router():
         seed_workspace(db, ws)
         log_event(db, ws.id, "workspace_created", f"Workspace created by {user.name}. Demo mode is on.", level="success")
         _set_cookie(response, svc, user.id)
-        return _session_payload(user, ws)
+        return _session_payload(user, ws, True)
+
+    @r.post("/api/auth/guest")
+    def guest(request: Request, response: Response, db: Session = Depends(get_db),
+              svc: Services = Depends(services)):
+        """No sign-in: a private workspace for this browser, created on first visit."""
+        if not svc.cfg.open_access:
+            raise HTTPException(403, "sign-in is required on this site")
+        uid = svc.crypto.read_session(request.cookies.get(SESSION_COOKIE))
+        user = db.get(User, uid) if uid is not None else None
+        if user is not None:
+            return _session_payload(user, db.get(Workspace, user.workspace_id), True)
+        if not _guest_limiter.allow("guest:" + _client_ip(request)):
+            raise HTTPException(429, "too many new workspaces from this network, try again later")
+        import secrets as _secrets
+
+        keys = svc.cfg.env_keys  # preselect the site's own email account, if it has one
+        provider = "resend" if keys.get("RESEND_API_KEY") else (
+            "gmail" if keys.get("GMAIL_USER") and keys.get("GMAIL_APP_PASSWORD") else None)
+        ws = Workspace(name="Guest workspace", demo_mode=True, onboarded=True,
+                       settings={"sending": {"provider": provider}} if provider else {})
+        db.add(ws)
+        db.flush()
+        user = User(email=f"guest-{_secrets.token_hex(8)}@guest.invalid", name="Guest",
+                    password_hash=hash_password(_secrets.token_urlsafe(24)), workspace_id=ws.id)
+        db.add(user)
+        db.flush()
+        seed_workspace(db, ws)
+        log_event(db, ws.id, "workspace_created",
+                  "Welcome! This workspace is private to your browser and starts in demo mode.", level="success")
+        _set_cookie(response, svc, user.id)
+        return _session_payload(user, ws, True)
 
     @r.post("/api/auth/login")
     def login(body: LoginIn, request: Request, response: Response, db: Session = Depends(get_db),
@@ -188,7 +222,7 @@ def _core_router():
         if user is None or not verify_password(body.password, user.password_hash):
             raise HTTPException(401, "wrong email or password")
         _set_cookie(response, svc, user.id)
-        return _session_payload(user, db.get(Workspace, user.workspace_id))
+        return _session_payload(user, db.get(Workspace, user.workspace_id), svc.cfg.open_access)
 
     @r.post("/api/auth/logout")
     def logout(response: Response):
@@ -196,8 +230,8 @@ def _core_router():
         return {"ok": True}
 
     @r.get("/api/auth/me")
-    def me(c: Caller = Depends(caller)):
-        return _session_payload(c.user, c.ws)
+    def me(c: Caller = Depends(caller), svc: Services = Depends(services)):
+        return _session_payload(c.user, c.ws, svc.cfg.open_access)
 
     # ---- settings
     @r.get("/api/settings")
@@ -275,6 +309,9 @@ def _core_router():
         if name in ("gmail", "resend"):
             from outreach.server.mailer import send_test_email
 
+            if svc.cfg.open_access and not _test_mail_limiter.allow(f"testmail:{ws.id}"):
+                return {"ok": False, "detail": "test emails are limited to 3 an hour on this site"}
+
             ok, detail = send_test_email(ws, name, svc.crypto, svc.cfg)
             return {"ok": ok, "detail": detail}
         if name == "gemini":
@@ -284,9 +321,14 @@ def _core_router():
             try:
                 from google import genai
 
-                models = list(genai.Client(api_key=key).models.list(config={"page_size": 5}))
+                client = genai.Client(api_key=key)  # keep a reference: the pager needs the open client
+                models = list(client.models.list(config={"page_size": 5}))
                 return {"ok": True, "detail": f"Key works ({len(models)}+ models visible)"}
             except Exception as exc:  # noqa: BLE001
+                code = getattr(exc, "code", None)
+                if code in (400, 401, 403):
+                    return {"ok": False, "detail": "Gemini rejected this key: create one at aistudio.google.com/apikey "
+                                                   "(it starts with AIza)"}
                 return {"ok": False, "detail": f"Gemini rejected the request: {type(exc).__name__}"}
         if name == "hunter":
             key = get_secret(ws, "hunter_api_key", svc.crypto, svc.cfg)

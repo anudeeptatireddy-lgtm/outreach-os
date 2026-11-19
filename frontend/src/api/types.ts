@@ -48,8 +48,6 @@ export type Session = {
   workspace: { id: number; name: string; onboarded: boolean; demo_mode: boolean };
 };
 
-export type SignupBody = { email: string; password: string; name: string; workspace_name: string };
-export type LoginBody = { email: string; password: string };
 
 // ---------- Health ----------
 

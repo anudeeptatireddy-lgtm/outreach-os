@@ -21,7 +21,7 @@ def client(tmp_path, monkeypatch):
     for var in ("GEMINI_API_KEY", "HUNTER_API_KEY", "RESEND_API_KEY", "DATABASE_URL", "VERCEL"):
         monkeypatch.delenv(var, raising=False)
     overrides = {"DATA_DIR": str(tmp_path), "SECRET_KEY": "test-secret-key-0123456789",
-                 "FRONTEND_DIST": str(tmp_path / "nodist")}
+                 "FRONTEND_DIST": str(tmp_path / "nodist"), "OPEN_ACCESS": "0"}
     pg = os.environ.get("OOS_TEST_DATABASE_URL")  # optional: run the same tests on Postgres
     if pg:
         overrides["DATABASE_URL"] = pg
@@ -275,3 +275,68 @@ def test_csv_export_neutralises_formulas(client):
         p.company_name = '=HYPERLINK("http://evil.example","x")'
     text = c.get(f"/api/campaigns/{camp['id']}/export.csv").text
     assert "'=HYPERLINK" in text and ',=HYPERLINK' not in text
+
+
+def test_guest_is_off_when_open_access_is_off(client):
+    assert client.post("/api/auth/guest", json={}).status_code == 403
+
+
+def test_guest_workspace_needs_no_sign_in(tmp_path, monkeypatch):
+    for var in ("GEMINI_API_KEY", "HUNTER_API_KEY", "RESEND_API_KEY", "DATABASE_URL", "VERCEL", "OPEN_ACCESS"):
+        monkeypatch.delenv(var, raising=False)
+    cfg = load_config({"DATA_DIR": str(tmp_path), "SECRET_KEY": "test-secret-key-0123456789",
+                       "FRONTEND_DIST": str(tmp_path / "nodist")})  # open access is the default
+    with TestClient(create_app(cfg, start_worker=False)) as client:
+        client.headers.update({"content-type": "application/json", "x-requested-with": "outreach-os"})
+        _guest_checks(client)
+
+
+def _guest_checks(client):
+    assert client.get("/api/auth/me").status_code == 401
+    s = client.post("/api/auth/guest", json={}).json()
+    assert s["workspace"]["onboarded"] and s["workspace"]["demo_mode"]
+    # the same browser keeps its workspace; a new browser gets its own
+    assert client.post("/api/auth/guest", json={}).json()["workspace"]["id"] == s["workspace"]["id"]
+    assert client.get("/api/auth/me").json()["workspace"]["id"] == s["workspace"]["id"]
+    assert client.get("/api/campaigns").status_code == 200
+    client.cookies.clear()
+    assert client.post("/api/auth/guest", json={}).json()["workspace"]["id"] != s["workspace"]["id"]
+    # a guest controls their own workspace: keys, sending and demo mode
+    assert client.put("/api/settings/secrets", json={"gemini_api_key": "guest-own-key"}).status_code == 200
+    assert client.patch("/api/settings", json={"sending": {"owner_email": "prof@uni.test"}}).status_code == 200
+    assert client.patch("/api/settings", json={"demo_mode": False}).json()["demo_mode"] is False
+
+
+def test_owner_mail_account_only_mails_the_owner(tmp_path, monkeypatch):
+    """With the owner's Gmail in the environment, a guest can send test emails, but only to OWNER_EMAIL."""
+    from outreach.server.db import Workspace
+    from outreach.server.mailer import live_ready, send_test_email, uses_owner_mail
+    from outreach.server.security import Crypto
+
+    for var in ("GMAIL_USER", "GMAIL_APP_PASSWORD", "DATABASE_URL", "VERCEL", "OPEN_ACCESS"):
+        monkeypatch.delenv(var, raising=False)
+    cfg = load_config({"DATA_DIR": str(tmp_path), "SECRET_KEY": "test-secret-key-0123456789",
+                       "GMAIL_USER": "owner@gmail.test", "GMAIL_APP_PASSWORD": "pw", "OWNER_EMAIL": "owner@site.test"})
+    ws = Workspace(name="g", settings={"sending": {"provider": "gmail", "owner_email": "victim@else.test",
+                                                   "physical_address": "1 Road", "from_name": "G"}}, secrets={})
+    assert uses_owner_mail(ws, "gmail", cfg)
+    assert any("own Gmail" in m for m in live_ready(ws, Crypto(cfg.secret_key), cfg))
+    sent = []
+    monkeypatch.setattr("outreach.server.mailer._smtp_send", lambda u, p, em: sent.append(em["To"]))
+    ok, _ = send_test_email(ws, "gmail", Crypto(cfg.secret_key), cfg)
+    assert ok and sent == ["owner@site.test"]
+
+
+def test_guest_starts_with_the_sites_resend_account(tmp_path, monkeypatch):
+    for var in ("GEMINI_API_KEY", "HUNTER_API_KEY", "GMAIL_USER", "GMAIL_APP_PASSWORD", "DATABASE_URL", "VERCEL",
+                "OPEN_ACCESS"):
+        monkeypatch.delenv(var, raising=False)
+    cfg = load_config({"DATA_DIR": str(tmp_path), "SECRET_KEY": "test-secret-key-0123456789",
+                       "FRONTEND_DIST": str(tmp_path / "nodist"), "RESEND_API_KEY": "re_test",
+                       "OWNER_EMAIL": "owner@site.test"})
+    with TestClient(create_app(cfg, start_worker=False)) as c:
+        c.headers.update({"content-type": "application/json", "x-requested-with": "outreach-os"})
+        c.post("/api/auth/guest", json={})
+        s = c.get("/api/settings").json()
+        assert s["sending"]["provider"] == "resend" and s["sending"]["mode"] == "test"
+        assert s["sending"]["owner_email"] == ""  # the owner's address is never shown to visitors

@@ -28,17 +28,27 @@ from outreach.playbook import Playbook
 from outreach.server.config import ServerConfig
 from outreach.server.db import Campaign, Message, PlaybookRow, Prospect, Suppression, Workspace, utcnow
 from outreach.server.security import Crypto
-from outreach.server.workspace import get_secret, log_event, settings_of
+from outreach.server.workspace import get_secret, log_event, secret_source, settings_of
 
 
 class SendRefused(Exception):
     pass
 
 
+def uses_owner_mail(ws: Workspace, provider: str | None, cfg: ServerConfig) -> bool:
+    """On a no-sign-in site, is this workspace about to send through the site owner's email account?"""
+    if not cfg.open_access or provider not in ("gmail", "resend"):
+        return False
+    name = "gmail_app_password" if provider == "gmail" else "resend_api_key"
+    return secret_source(ws, name, cfg) == "env"
+
+
 def live_ready(ws: Workspace, crypto: Crypto, cfg: ServerConfig) -> list[str]:
     s = settings_of(ws)["sending"]
     missing = []
     provider = s.get("provider")
+    if uses_owner_mail(ws, provider, cfg):
+        missing.append("Your own Gmail or Resend account (the site's shared one only sends test emails)")
     if provider == "gmail":
         if not get_secret(ws, "gmail_user", crypto, cfg) or not get_secret(ws, "gmail_app_password", crypto, cfg):
             missing.append("Gmail address and app password")
@@ -144,6 +154,11 @@ def send_message(db: Session, msg: Message, crypto: Crypto, cfg: ServerConfig, *
 
     provider = s.get("provider")
     owner = (s.get("owner_email") or "").strip()
+    if uses_owner_mail(ws, provider, cfg):  # the site owner's account: test emails to the owner only
+        if mode == "live":
+            _fail(db, msg, "live sending needs your own Gmail or Resend account (Settings > Integrations)")
+            return
+        owner = cfg.owner_email
     if mode == "test":
         if not owner:
             _fail(db, msg, "test mode needs an owner email (Settings > Sending)")
@@ -248,6 +263,10 @@ def _fail(db: Session, msg: Message, error: str) -> None:
 def send_test_email(ws: Workspace, provider: str, crypto: Crypto, cfg: ServerConfig) -> tuple[bool, str]:
     s = settings_of(ws)["sending"]
     owner = (s.get("owner_email") or "").strip()
+    if uses_owner_mail(ws, provider, cfg):  # the site owner's account only mails the site owner
+        owner = cfg.owner_email
+        if not owner:
+            return False, "This site's shared email account is not set up; add your own in Settings > Integrations"
     if not owner:
         return False, "Set an owner email in Settings > Sending first"
     text = "This is a test email from outreach-os. If you can read it, sending works."

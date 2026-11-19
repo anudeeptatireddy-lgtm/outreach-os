@@ -37,6 +37,15 @@ class ServerConfig:
     env_keys: dict[str, str] = field(default_factory=dict)
     worker_interval_s: float = 2.0
     cron_secret: str = ""
+    # Open access: no sign-in. Every visitor gets a private guest workspace they fully control.
+    # The owner's environment keys stay usable as fallbacks, but the owner's email account only ever
+    # sends test emails to OWNER_EMAIL (see mailer.owner_mail_guard), and Hunter shares one budget.
+    open_access: bool = True
+    owner_email: str = ""
+    sender_name: str = ""
+    sender_address: str = ""
+    open_max_domains: int = 10
+    open_max_prospects: int = 40
 
     @property
     def cache_root(self) -> Path:
@@ -74,8 +83,10 @@ def load_config(overrides: dict[str, str] | None = None) -> ServerConfig:
             database_url = "postgresql+psycopg://" + database_url.removeprefix(prefix)
     vercel_url = env.get("VERCEL_PROJECT_PRODUCTION_URL") or env.get("VERCEL_URL")
     base = (env.get("PUBLIC_BASE_URL") or (f"https://{vercel_url}" if vercel_url else "http://localhost:8000")).rstrip("/")
-    keys = {k: env[k] for k in ("GEMINI_API_KEY", "HUNTER_API_KEY", "RESEND_API_KEY", "GMAIL_USER",
-                                "GMAIL_APP_PASSWORD", "RESEND_WEBHOOK_SECRET") if env.get(k)}
+    # Keys never contain whitespace; pasted ones often do (wrapped copies, Gmail's "abcd efgh" app passwords).
+    keys = {k: "".join(env[k].split()) for k in ("GEMINI_API_KEY", "HUNTER_API_KEY", "RESEND_API_KEY", "GMAIL_USER",
+                                                 "GMAIL_APP_PASSWORD", "RESEND_WEBHOOK_SECRET")
+            if env.get(k) and env[k].strip()}
     return ServerConfig(
         data_dir=data_dir,
         database_url=database_url,
@@ -87,6 +98,12 @@ def load_config(overrides: dict[str, str] | None = None) -> ServerConfig:
         frontend_dist=Path(env.get("FRONTEND_DIST") or ROOT / "frontend" / "dist"),
         env_keys=keys,
         worker_interval_s=float(env.get("WORKER_INTERVAL_S", "2")),
+        open_access=env.get("OPEN_ACCESS", "1") in ("1", "true", "yes"),
+        owner_email=(env.get("OWNER_EMAIL") or "").strip(),
+        sender_name=(env.get("SENDER_NAME") or "").strip(),
+        sender_address=(env.get("SENDER_ADDRESS") or "").strip(),
+        open_max_domains=int(env.get("OPEN_MAX_DOMAINS", "10")),
+        open_max_prospects=int(env.get("OPEN_MAX_PROSPECTS", "40")),
     )
 
 

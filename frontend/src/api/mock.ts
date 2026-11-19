@@ -1305,6 +1305,10 @@ on("POST", "/api/auth/logout", () => {
   return { ok: true };
 });
 on("GET", "/api/auth/me", () => session());
+on("POST", "/api/auth/guest", () => {
+  setAuthed(true);
+  return session();
+});
 
 // settings
 on("GET", "/api/settings", () => clone(db.settings));
@@ -1689,7 +1693,7 @@ on("DELETE", "/api/suppressions/:id", (m) => {
 
 // ---------------------------------------------------------------------------------------------
 
-const PUBLIC = ["/api/auth/signup", "/api/auth/login", "/api/auth/logout", "/api/health"];
+const PUBLIC = ["/api/auth/signup", "/api/auth/login", "/api/auth/logout", "/api/auth/guest", "/api/health"];
 
 export async function mockRequest(method: string, fullPath: string, body?: unknown): Promise<unknown> {
   const url = new URL(fullPath, "http://mock.local");

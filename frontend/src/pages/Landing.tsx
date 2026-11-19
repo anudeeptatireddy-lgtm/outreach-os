@@ -45,8 +45,7 @@ function Nav() {
         <div className="ml-auto flex items-center gap-2">
           <span className="hidden font-mono text-[11px] text-muted lg:inline"><Clock /></span>
           <ThemeToggle />
-          <Link to="/login" className="hidden h-9 items-center rounded-full px-4 text-[14px] font-medium text-ink hover:bg-active sm:inline-flex">Sign in</Link>
-          <Link to="/signup" className="inline-flex h-9 items-center rounded-full bg-ink px-4 text-[14px] font-medium text-ground hover:bg-ink/90">Try the demo</Link>
+                    <Link to="/app" className="inline-flex h-9 items-center rounded-full bg-ink px-4 text-[14px] font-medium text-ground hover:bg-ink/90">Try the demo</Link>
         </div>
       </div>
     </header>
@@ -100,10 +99,9 @@ function Hero() {
             <p ref={status} aria-label={STATUS} className="mt-4 min-h-[20px] font-mono text-[12px] text-muted" />
           </div>
           <div data-rise className="flex flex-wrap gap-2">
-            <Link to="/signup" className="inline-flex h-11 items-center gap-2 rounded-full bg-accent px-5 text-[15px] font-medium text-white hover:bg-accent/90">
+            <Link to="/app" className="inline-flex h-11 items-center gap-2 rounded-full bg-accent px-5 text-[15px] font-medium text-white hover:bg-accent/90">
               Try the live demo <ArrowRight className="h-4 w-4" />
             </Link>
-            <Link to="/login" className="inline-flex h-11 items-center rounded-full border border-control bg-surface/70 px-5 text-[15px] font-medium text-ink hover:bg-surface">Sign in</Link>
           </div>
         </div>
       </div>
@@ -212,7 +210,7 @@ function FinalCta() {
           See your first trail.
         </h2>
         <p className="mt-5 max-w-[42ch] text-[16px] leading-7 text-white/90 [text-shadow:0_1px_16px_rgba(5,6,26,.5)]">Demo mode needs no keys. Paste a few domains and read why each one qualified.</p>
-        <Link to="/signup" className="mt-8 inline-flex h-11 items-center gap-2 rounded-full bg-white px-6 text-[15px] font-medium text-[#0b0c1a] hover:bg-white/90">
+        <Link to="/app" className="mt-8 inline-flex h-11 items-center gap-2 rounded-full bg-white px-6 text-[15px] font-medium text-[#0b0c1a] hover:bg-white/90">
           Try the live demo <ArrowRight className="h-4 w-4" />
         </Link>
       </div>
@@ -243,8 +241,7 @@ export default function Landing() {
         <Wordmark />
         <span className="font-mono text-[11px] text-muted">Evidence-cited outbound for B2B teams</span>
         <span className="ml-auto flex gap-4 text-[13px] text-muted">
-          <Link to="/login" className="hover:text-ink">Sign in</Link>
-          <Link to="/signup" className="hover:text-ink">Start free</Link>
+                    <Link to="/app" className="hover:text-ink">Open the app</Link>
         </span>
       </footer>
     </div>

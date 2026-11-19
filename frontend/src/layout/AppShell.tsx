@@ -1,8 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
-import { BookOpen, ChevronsUpDown, Inbox, LayoutGrid, LogOut, Menu as MenuIcon, Monitor, Moon, Send, Settings, Sun, Target, X } from "lucide-react";
-import { api } from "../api/client";
+import { BookOpen, ChevronsUpDown, Inbox, LayoutGrid, Menu as MenuIcon, Monitor, Moon, Send, Settings, Sun, Target, X } from "lucide-react";
 import { useMessages, useSettings } from "../api/hooks";
 import { Wordmark } from "../components/brand/Orb";
 import { Menu } from "../components/ui/Menu";
@@ -67,16 +65,7 @@ function SidebarFooter() {
   const { session } = useSession();
   const { pending } = useWorker();
   const settings = useSettings();
-  const qc = useQueryClient();
   const nav = useNavigate();
-  const logout = async () => {
-    try {
-      await api.logout();
-    } finally {
-      qc.clear();
-      nav("/login", { replace: true });
-    }
-  };
   const mode = settings.data?.demo_mode ? "Demo mode" : settings.data?.sending.mode === "live" ? "Live sending" : "Test mode";
   return (
     <div className="mt-auto flex flex-col gap-2 pt-4">
@@ -97,17 +86,15 @@ function SidebarFooter() {
           align="start"
           items={[
             { label: "Settings", icon: <Settings className="h-4 w-4" />, onSelect: () => nav("/app/settings") },
-            "separator",
-            { label: "Log out", icon: <LogOut className="h-4 w-4" />, onSelect: logout },
           ]}
           trigger={(p) => (
             <button {...p} className="flex min-w-0 flex-1 items-center gap-2 rounded-control px-1.5 py-1.5 text-left hover:bg-active">
               <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent-soft text-xs font-semibold text-accent-ink">
-                {session.user.name.split(" ").map((x) => x[0]).slice(0, 2).join("")}
+                {session.workspace.name.split(" ").map((x) => x[0]).slice(0, 2).join("")}
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-[13px] font-medium">{session.user.name}</span>
-                <span className="block truncate text-xs text-faint">{session.user.email}</span>
+                <span className="block truncate text-[13px] font-medium">{session.workspace.name}</span>
+                <span className="block truncate text-xs text-faint">Private to this browser</span>
               </span>
               <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-faint" aria-hidden />
             </button>

@@ -27,7 +27,7 @@ from outreach.playbook import Playbook
 from outreach.server.config import ServerConfig
 from outreach.server.db import Campaign, HunterCacheRow, Message, PlaybookRow, Prospect, Workspace, utcnow
 from outreach.server.security import Crypto
-from outreach.server.workspace import get_secret, hunter_usage, log_event, record_hunter_call, settings_of
+from outreach.server.workspace import get_secret, hunter_usage, log_event, record_hunter_call, secret_source, settings_of
 from outreach.skeleton import Context
 from outreach.stages import STAGE_MODELS, DomainUnreachable, StopStage
 
@@ -66,6 +66,7 @@ class DbHunter:
     def __init__(self, db: Session, ws: Workspace, api_key: str, cache_dir: Path):
         self.db, self.ws, self.key, self.cache_dir = db, ws, api_key, cache_dir
         self.live_calls_this_process = 0
+        self.shared_budget: int | None = None
 
     def domain_search(self, domain: str) -> dict:
         from outreach.hunter import HunterAuthError, HunterClient, HunterQuotaError
@@ -76,6 +77,13 @@ class DbHunter:
         if not self.key:
             raise HunterAuthError("Hunter API key is not set: add it in Settings > Integrations")
         usage = hunter_usage(self.ws)
+        if self.shared_budget is not None:  # open access: one budget for the owner's key
+            from sqlalchemy import func
+
+            month_start = utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            used = self.db.scalar(select(func.count()).select_from(HunterCacheRow)
+                                  .where(HunterCacheRow.created_at >= month_start)) or 0
+            usage = {"used_this_month": used, "monthly_budget": self.shared_budget}
         if usage["used_this_month"] >= usage["monthly_budget"]:
             raise HunterQuotaError(
                 f"Hunter monthly budget of {usage['monthly_budget']} searches reached: raise it in Settings "
@@ -109,6 +117,10 @@ def build_context(db: Session, ws: Workspace, campaign: Campaign | None, pb: Pla
         llm = LLMClient(key, cache_dir=settings.cache_dir / "llm")
         fetcher = PageFetcher(settings.cache_dir / "pages")
         hunter = DbHunter(db, ws, settings.hunter_api_key.get_secret_value(), settings.cache_dir)
+        if cfg.open_access and secret_source(ws, "hunter_api_key", cfg) == "env":  # the owner's key: one shared cap
+            import os
+
+            hunter.shared_budget = int(os.environ.get("HUNTER_MONTHLY_BUDGET", "25") or 25)
     return Context(settings=settings, llm=llm, hunter=hunter, fetcher=fetcher,
                    store=RunStore(settings.out_dir), dry_run=True, out=io.StringIO(),
                    playbook=pb, rubric=pb.loaded_rubric())

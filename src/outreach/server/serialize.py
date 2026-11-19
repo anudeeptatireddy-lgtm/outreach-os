@@ -47,6 +47,9 @@ def settings_dict(ws: Workspace, crypto: Crypto, cfg: ServerConfig) -> dict:
         "hunter_usage": hunter_usage(ws),
         "live_ready": {"ok": not missing, "missing": missing},
         "webhook_url": f"{cfg.public_base_url}/api/webhooks/resend/{ws.id}",
+        "live_data_available": bool(get_secret(ws, "gemini_api_key", crypto, cfg)),
+        "limits": {"max_domains_per_campaign": cfg.open_max_domains,
+                   "max_live_prospects": cfg.open_max_prospects} if cfg.open_access else None,
     }
 
 

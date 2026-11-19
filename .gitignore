@@ -20,3 +20,4 @@ node_modules/
 frontend/dist/
 .vercel
 .claude/
+*.tsbuildinfo

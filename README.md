@@ -53,8 +53,10 @@ product with no API keys. These sample domains show every outcome: `ledgerloop.i
   added automatically), send window, daily cap, Resend webhooks, CAN-SPAM footer.
 - **Dashboard**: funnel, reply and bounce rates, sends over time, hours saved and an activity
   feed.
-- **Workspaces**: email and password accounts. API keys are stored per workspace, encrypted at
-  rest, and never returned by the API.
+- **No sign-in**: every browser gets its own private workspace on first visit (`OPEN_ACCESS=1`,
+  the default). API keys are stored per workspace, encrypted at rest, and never returned by the
+  API. Keys set in the server environment act as fallbacks; the site owner's email account only
+  ever sends test emails to `OWNER_EMAIL`, never to prospects.
 
 ## Run it locally
 
@@ -66,8 +68,8 @@ npm --prefix frontend ci && npm --prefix frontend run build
 .venv/bin/python -m outreach serve        # http://localhost:8000
 ```
 
-Sign up. The workspace starts in demo mode with the Sprinto playbook. To go real, add your keys
-in **Settings > Integrations**:
+Open the app: no sign-in. The workspace starts in demo mode with the Sprinto playbook. To go
+real, add your keys in **Settings > Integrations** (or in `.env`, for every workspace):
 
 - **Gemini API key** (required): drives extraction, research and writing.
 - **Hunter.io key** (optional): contact search. The free tier gives 25 to 50 searches a month,

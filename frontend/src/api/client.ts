@@ -10,7 +10,6 @@ import type {
   Event,
   Health,
   IntegrationName,
-  LoginBody,
   ManualContactBody,
   Message,
   MessagePatch,
@@ -27,7 +26,6 @@ import type {
   Session,
   Settings,
   SettingsPatch,
-  SignupBody,
   Suppression,
   TestResult,
   WorkerTick,
@@ -50,16 +48,16 @@ export class ApiError extends Error {
 
 type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
-const PUBLIC_PATHS = ["/", "/login", "/signup"];
-
+/** No sign-in: a 401 means the browser lost its guest cookie, so reload and get a fresh workspace. */
 function redirectToLogin() {
-  if (typeof window === "undefined") return;
-  const path = window.location.pathname;
-  if (PUBLIC_PATHS.includes(path)) return;
-  const target = path + window.location.search;
-  // only in-app paths are carried through login (see lib/safeNext)
-  const next = /^\/app(\/|$|\?)/.test(target) && !target.includes("\\") ? `?next=${encodeURIComponent(target)}` : "";
-  window.location.assign(`/login${next}`);
+  if (typeof window === "undefined" || !window.location.pathname.startsWith("/app")) return;
+  try {
+    if (sessionStorage.getItem("guest-reload")) return; // cookies blocked: don't loop
+    sessionStorage.setItem("guest-reload", "1");
+  } catch {
+    return;
+  }
+  window.location.reload();
 }
 
 let mockModule: Promise<typeof import("./mock")> | null = null;
@@ -121,9 +119,7 @@ function qs(params: Record<string, string | number | null | undefined>): string 
 
 export const api = {
   // Auth
-  signup: (b: SignupBody) => request<Session>("POST", "/api/auth/signup", b, { noRedirect: true }),
-  login: (b: LoginBody) => request<Session>("POST", "/api/auth/login", b, { noRedirect: true }),
-  logout: () => request<{ ok: true }>("POST", "/api/auth/logout", undefined, { noRedirect: true }),
+  guest: () => request<Session>("POST", "/api/auth/guest", {}, { noRedirect: true }),
   me: () => request<Session>("GET", "/api/auth/me", undefined, { noRedirect: true }),
 
   health: () => request<Health>("GET", "/api/health"),

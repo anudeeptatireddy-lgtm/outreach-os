@@ -5,14 +5,12 @@ import { ApiError } from "./api/client";
 import { AppShell } from "./layout/AppShell";
 import { ConfirmProvider } from "./components/ui/Dialog";
 import { FullPageSpinner } from "./components/ui/Feedback";
-import { RequireSession, useMe } from "./lib/session";
+import { RequireSession } from "./lib/session";
 import { ThemeProvider } from "./lib/theme";
 import { ToastProvider } from "./lib/toast";
 import { WorkerPumpProvider } from "./lib/worker";
 
 const Landing = lazy(() => import("./pages/Landing"));
-const Login = lazy(() => import("./pages/auth/Login"));
-const Signup = lazy(() => import("./pages/auth/Signup"));
 const Onboarding = lazy(() => import("./pages/Onboarding"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const CampaignsList = lazy(() => import("./pages/campaigns/CampaignsList"));
@@ -43,11 +41,8 @@ function Authed({ children, shell = true }: { children: ReactNode; shell?: boole
   );
 }
 
-/** "/" is the public landing page; signed-in visitors go straight to the app. */
+/** "/" is the public landing page; its buttons open the app directly (no sign-in). */
 function Home() {
-  const me = useMe();
-  if (me.isPending) return <FullPageSpinner label="Loading" />;
-  if (me.data) return <Navigate to={me.data.workspace.onboarded ? "/app" : "/onboarding"} replace />;
   return <Landing />;
 }
 
@@ -67,8 +62,8 @@ export function App() {
               <Suspense fallback={<FullPageSpinner label="Loading" />}>
                 <Routes>
                   <Route path="/" element={<Home />} />
-                  <Route path="/login" element={<Login />} />
-                  <Route path="/signup" element={<Signup />} />
+                  <Route path="/login" element={<Navigate to="/app" replace />} />
+                  <Route path="/signup" element={<Navigate to="/app" replace />} />
                   <Route path="/onboarding" element={<Authed shell={false}><Onboarding /></Authed>} />
                   <Route path="/app" element={<Authed><Dashboard /></Authed>} />
                   <Route path="/app/campaigns" element={<Authed><CampaignsList /></Authed>} />

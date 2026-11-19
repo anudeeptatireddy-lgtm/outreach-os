@@ -1,0 +1,11 @@
+# Never upload local secrets or data with `vercel deploy`; keys live in the Vercel project settings.
+.env
+.env.*
+!.env.example
+data/
+out/
+.venv/
+.pytest_cache/
+frontend/node_modules/
+frontend/dist/
+sprinto-outreach/
