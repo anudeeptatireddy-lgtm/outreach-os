@@ -28,6 +28,7 @@ import hashlib
 import ipaddress
 import os
 import re
+import zlib
 import socket
 import time
 from collections.abc import Callable
@@ -36,6 +37,7 @@ from pathlib import Path
 from urllib.parse import urldefrag, urljoin, urlsplit
 from urllib.robotparser import RobotFileParser
 
+import httpcore
 import httpx
 import trafilatura
 from bs4 import BeautifulSoup, Comment
@@ -226,6 +228,78 @@ class _Robots:
     failure: PageResult | None = None
 
 
+class _PublicOnlyBackend(httpcore.SyncBackend):
+    """Resolve once, refuse unless every address is public, then connect to exactly that address.
+
+    This closes the DNS-rebinding gap between the pre-request check and the connect: the socket
+    can only ever reach an address validated here. TLS SNI and certificate checks still use the
+    original hostname (httpcore passes it to start_tls separately)."""
+
+    def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
+        try:
+            infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except OSError as exc:
+            raise httpcore.ConnectError(f"DNS resolution failed: {exc}") from exc
+        ips = list(dict.fromkeys(info[4][0] for info in infos))
+        if not ips or not all(is_public_address(ip) for ip in ips):
+            raise httpcore.ConnectError(f"{host} resolves to a non-public address")
+        last: Exception | None = None
+        for ip in ips:
+            try:
+                return super().connect_tcp(ip, port, timeout, local_address, socket_options)
+            except httpcore.ConnectError as exc:
+                last = exc
+        raise last  # type: ignore[misc]
+
+
+def guarded_client() -> httpx.Client:
+    """The default HTTP client: connections can only reach public addresses. Behind an explicit
+    proxy the proxy makes the connection, so the plain client is used there."""
+    if any(os.environ.get(v) for v in _PROXY_VARS):
+        return httpx.Client(timeout=TIMEOUT)
+    transport = httpx.HTTPTransport()
+    transport._pool._network_backend = _PublicOnlyBackend()  # pinned httpx/httpcore; see test_fetch
+    return httpx.Client(timeout=TIMEOUT, transport=transport)
+
+
+def _read_capped(resp: httpx.Response, max_bytes: int, over_deadline: Callable[[], bool]) -> bytes | str:
+    """At most max_bytes of DECODED body. We ask for identity encoding; a server that compresses
+    anyway is decoded incrementally with a hard output cap (no decompression bomb). Returns the
+    bytes, or an error reason string."""
+    enc = resp.headers.get("content-encoding", "").lower().strip()
+    if enc in ("", "identity"):
+        decoder = None
+    elif enc in ("gzip", "x-gzip", "deflate"):
+        decoder = zlib.decompressobj(16 + zlib.MAX_WBITS if "gzip" in enc else zlib.MAX_WBITS)
+    else:
+        return f"unsupported_encoding:{enc[:20]}"
+    buf = bytearray()
+    try:
+        raw_chunks = resp.iter_raw()
+        first = next(raw_chunks, b"")
+    except httpx.StreamConsumed:  # an already-buffered response (mocks): nothing left to decode lazily
+        return resp.content[:max_bytes]
+    for raw in _chain(first, raw_chunks):
+        if decoder is None:
+            buf.extend(raw)
+        else:
+            try:
+                buf.extend(decoder.decompress(raw, max(1, max_bytes - len(buf))))
+            except zlib.error:
+                return "bad_encoding"
+        if over_deadline():
+            return "deadline"
+        if len(buf) >= max_bytes:
+            break
+    return bytes(buf[:max_bytes])
+
+
+def _chain(first: bytes, rest):
+    if first:
+        yield first
+    yield from rest
+
+
 class PageFetcher:
     def __init__(
         self,
@@ -238,7 +312,7 @@ class PageFetcher:
         min_interval: float | None = None,
     ):
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
-        self._http = http or httpx.Client(timeout=TIMEOUT)
+        self._http = http or guarded_client()
         self._resolve = resolve
         self._sleep = sleep
         self._clock = clock
@@ -387,7 +461,7 @@ class PageFetcher:
                 with self._http.stream(
                     "GET",
                     current,
-                    headers={"User-Agent": USER_AGENT},
+                    headers={"User-Agent": USER_AGENT, "Accept-Encoding": "identity"},
                     follow_redirects=False,
                     timeout=TIMEOUT,
                 ) as resp:
@@ -423,14 +497,12 @@ class PageFetcher:
                     body = b""
                     wanted = 200 <= code < 300 and (not html_only or "text/html" in ctype)
                     if wanted:
-                        buf = bytearray()
-                        for chunk in resp.iter_bytes():
-                            buf.extend(chunk)
-                            if self._clock() - start > FETCH_DEADLINE_S:
-                                return fail("error", "deadline", f"exceeded {FETCH_DEADLINE_S:g}s")
-                            if len(buf) >= max_bytes:
-                                break
-                        body = bytes(buf[:max_bytes])
+                        got = _read_capped(resp, max_bytes, lambda: self._clock() - start > FETCH_DEADLINE_S)
+                        if got == "deadline":
+                            return fail("error", "deadline", f"exceeded {FETCH_DEADLINE_S:g}s")
+                        if isinstance(got, str):
+                            return fail("unavailable", got.split(":")[0], f"response body: {got}")
+                        body = got
                     return _Got(
                         final_url=current,
                         code=code,

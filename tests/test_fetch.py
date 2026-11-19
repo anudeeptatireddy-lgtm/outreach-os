@@ -650,3 +650,42 @@ def test_peer_address_guard_blocks_rebinding(monkeypatch):
     assert fetch_mod._peer_ip(private) == "10.0.0.5" and not fetch_mod.is_public_address("10.0.0.5")
     assert fetch_mod._peer_ip(public) == "93.184.216.34"
     assert fetch_mod._peer_ip(httpx.Response(200)) is None
+
+
+def test_default_client_pins_connections_to_public_addresses(monkeypatch):
+    import httpcore
+    import pytest
+    import socket as socket_mod
+
+    from outreach import fetch as fetch_mod
+
+    for var in fetch_mod._PROXY_VARS:
+        monkeypatch.delenv(var, raising=False)
+    client = fetch_mod.guarded_client()
+    backend = client._transport._pool._network_backend  # fails loudly if httpx/httpcore internals move
+    assert isinstance(backend, fetch_mod._PublicOnlyBackend)
+
+    monkeypatch.setattr(socket_mod, "getaddrinfo",
+                        lambda host, port, **kw: [(2, 1, 6, "", ("10.0.0.7", port))])
+    with pytest.raises(httpcore.ConnectError, match="non-public"):
+        backend.connect_tcp("rebind.example", 443)
+    monkeypatch.setattr(socket_mod, "getaddrinfo",
+                        lambda host, port, **kw: [(2, 1, 6, "", ("93.184.216.34", port)),
+                                                  (2, 1, 6, "", ("127.0.0.1", port))])
+    with pytest.raises(httpcore.ConnectError, match="non-public"):
+        backend.connect_tcp("mixed.example", 443)
+
+
+def test_gzip_bomb_is_capped_while_decoding():
+    import gzip
+
+    import httpx
+
+    from outreach.fetch import _read_capped
+
+    bomb = gzip.compress(b"\0" * 50_000_000)  # ~50 KB on the wire, 50 MB decoded
+    resp = httpx.Response(200, headers={"content-encoding": "gzip"}, stream=httpx.ByteStream(bomb))
+    out = _read_capped(resp, 1_500_000, lambda: False)
+    assert isinstance(out, bytes) and len(out) == 1_500_000
+    odd = httpx.Response(200, headers={"content-encoding": "br"}, stream=httpx.ByteStream(b"x"))
+    assert _read_capped(odd, 100, lambda: False).startswith("unsupported_encoding")
